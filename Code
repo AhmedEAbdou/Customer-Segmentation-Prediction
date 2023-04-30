@@ -1,0 +1,400 @@
+---
+title: "Project 1"
+author: "Ahmed Abdou"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(Amelia)
+library(caTools)
+```
+
+- Reading the data and grabbing useful variables.
+
+```{r}
+
+CBC =  read.csv("CharlesBookClub.csv")
+
+D = CBC[, c(7, 18:22)]
+head(D)
+
+```
+
+
+- Partition data into training and validation:
+
+```{r}
+p = 0.6 
+n = nrow(D) 
+set.seed(1)
+index = sample(1:n)
+k = n*p
+train = D[index[1:k], ]
+valid = D[-index[1:k], ]
+
+```
+
+## Question number 1:
+
+- response rate for the training data customers taken as a whole
+
+```{r}
+
+train.1 <- train
+train.rr <- mean(train.1$Florence)
+
+```
+- What is the response rate for each of the 4-5-3 groups. 
+
+
+```{r}
+
+# creating a new col as a refrence
+train.1 <- train.1 %>% mutate(RFM.combs = paste0(Rcode,"_",Mcode,"_",Fcode))
+
+#creating a new data frame for the different combinations for train.1:
+all.combs.train.1 <- table(train.1$RFM.combs) %>% as.data.frame()
+
+freq.t <- table(train.1$RFM.combs,train.1$Florence) %>% as.data.frame()
+
+#creating a new cols for the frequency of the groups who bought the book and for their responce rate.
+all.combs.train.1 <- all.combs.train.1 %>% mutate(success.Resp = freq.t$Freq[52:nrow(freq.t)],
+    Resp.r =  success.Resp/Freq)
+colnames(all.combs.train.1)[1] <- "Combs"
+all.combs.train.1[all.combs.train.1$Combs == "4_5_3",]
+
+```
+ AS shown above, the response rate is 0.07467532.
+
+
+- The above avg combs for the training data set.
+
+```{r}
+
+abov.avg.train <- all.combs.train.1 %>% dplyr::filter( Resp.r > train.rr)
+abov.avg.train
+
+```
+
+
+- Question number 2
+
+Computing the response rate for the above average combinations in the validation data using these combinations.
+
+```{r}
+
+valid.1 <- valid
+#passing the above avg. groups in a vec.
+train.combs <- abov.avg.train$Combs %>% as.vector()
+#making a reference col for the valid data set.
+valid.1 <- valid.1 %>% mutate(RFM.combs = paste0(Rcode,"_",Mcode,"_",Fcode))
+#creating a new df with the rows that has the above avg. groups
+abov.avg.valid <- valid.1 %>% dplyr::filter(RFM.combs %in% train.combs)
+
+# The above average responce rate for the valid:
+mean(abov.avg.valid$Florence)
+
+
+```
+
+- Question 3
+Rework parts 1 and 2 with three segments:
+
+- First creating a new data frame for the different combinations for valid.1:
+```{r}
+#creating a new data frame for the different combinations for valid.1:
+all.combs.valid <- table(valid.1$RFM.combs) %>% as.data.frame()
+
+#creating a new df to get the freq for each sucess and failer for Florence
+freq.t.valid <- table(valid.1$RFM.combs,valid.1$Florence) %>% as.data.frame()
+
+
+#creating a new cols for the frequency of the groups who bought the book and for their response rate.
+all.combs.valid <- all.combs.valid %>% mutate(success.Resp = freq.t.valid$Freq[49:nrow(freq.t.valid)],Resp.r =  success.Resp/Freq)
+colnames(all.combs.train.1)[1] <- "Combs"
+
+```
+
+-Segment 1: RFM combinations that have response rates that exceed
+twice the overall response rate:
+
+
+```{r}
+all.combs.valid %>% filter(all.combs.valid$Resp.r > 2*train.rr)
+```
+
+Computing the response rate for the above average combinations in the validation data using these combinations.
+
+```{r}
+mean(all.combs.valid$Resp.r[all.combs.valid$Resp.r > 2*train.rr])
+```
+
+Segment 2:RFM combinations that exceed the overall response rate
+but do not exceed twice that rate
+```{r}
+all.combs.valid %>% filter(all.combs.valid$Resp.r > train.rr & all.combs.valid$Resp.r < 2*train.rr )
+
+```
+
+Computing the response rate for the above average combinations in the validation data using these combinations.
+```{r}
+mean(all.combs.valid$Resp.r > train.rr & all.combs.valid$Resp.r < 2*train.rr )
+
+```
+
+
+Segment 3: the remaining RFM combinations
+
+```{r}
+all.combs.valid %>% filter(all.combs.valid$Resp.r < train.rr)
+```
+
+Computing the response rate for the above average combinations in the validation data using these combinations.
+```{r}
+mean(all.combs.valid$Resp.r < train.rr)
+
+```
+
+- End of the first three parts:
+
+
+### Starting of part 4,6, and 7
+
+- Balance the training data:
+```{r}
+
+library(ROSE)
+train <- ovun.sample(Florence~., data=train,
+                     p=0.5,
+                     seed=1,
+                     method="over")$data
+
+
+```
+
+
+- Normalize the data.
+
+```{r}
+library(caret) 
+receipe = preProcess(train, method = "range")
+train.norm = predict(receipe, train)
+valid.norm = predict(receipe, valid)
+
+```
+
+
+- Answering question 4:
+Use the k-nearest-neighbor approach to classify cases with k =
+1 to 11, using Florence as the outcome variable. Based on the validation
+set.Based on Rcode, Mocde, Fcode, FirstPurch:, and RelatedPurch.
+
+```{r}
+accuracy = NULL
+for(i in 1:11) {
+  knn.pred <- FNN::knn(train = train.norm[,-2],
+                       test = valid.norm[, -2],
+                       cl = train.norm[, 2],    
+                       k = i,
+                       prob = TRUE)  
+  accuracy[i] <- caret::confusionMatrix(factor(knn.pred, levels = c(1, 0)), factor(valid.norm[, 2], levels = c(1, 0)))$overall[1]
+}
+
+accuracy.df = data.frame(k=1:11, accuracy)
+accuracy.df
+plot(accuracy.df, type = "l")
+
+```
+
+
+- Creating a lift chart function to be used later:
+
+```{r}
+# 5.2 Create lift chart using the instructor's function
+plot.lift = function(pred.prob, actual, groups = 10){
+  library(gains)
+  gain <- gains(actual = actual,
+                predicted = pred.prob,
+                groups=groups
+  )
+  
+  par(mfrow=c(1,2))
+  
+  # plot.lift chart function
+  
+  plot(c(0,gain$cume.pct.of.total*sum(actual))~c(0,gain$cume.obs),
+       xlab="# Observations",
+       ylab="The Number of 1's", col = "blue",
+       #main="The Cumulative Lift Chart",
+       #sub = paste0("(% of 1's", " is ", round(mean(actual)*100,2), "%)"),
+       type="l",
+       #asp = 1,
+       xlim = c(0, length(actual)),
+       ylim = c(0, sum(actual)*1.0),
+       main = "The Cumulative Lift Chart"
+  )
+  #mtext(text = "The Cumulative Lift Chart", side=3, line=2, cex=1)
+  mtext(text = paste0("(% of 1's in actual response", " is ", round(mean(actual)*100,2), "%)"),
+        side=3, line=0.5, cex=1)
+  lines(c(0,sum(actual))~c(0, length(actual)), lty=2)
+  
+  # compute deciles and plot decile-wise chart
+  heights <- gain$mean.resp/mean(actual)
+  
+  par(mgp=c(3, 1.5, 0)) # Adjust tick mark position
+  midpoints <- barplot(heights,
+                       names.arg = gain$depth,
+                       ylim = c(0, max(gain$lift/100)*1.1),
+                       xlab = "Percentile", ylab = "Lift", main = "Decile-wise Lift Chart")
+  
+  # add labels to columns
+  text(midpoints, heights, labels=round(heights, 1), cex = 0.9, pos = 3, col = "blue")
+  par(mfrow=c(1,1))
+  
+  D = data.frame(Oberserved = actual, Propensity = pred.prob)
+  pp = D$Propensity
+  D = D[order(-pp), ]
+  invisible(list(sorted.data = D , gain=gain))
+}
+
+```
+
+
+- Creating lift chart and reporting the expected lift for
+an equal number of customers from the validation dataset.
+```{r, warning=FALSE}
+# will get prob of 1 for each .....
+pred.label = as.vector(knn.pred)
+prob = attr(knn.pred, "prob")
+p = c()
+for (i in 1:length(pred.label)){
+  p[i] = ifelse(pred.label[i] == "1", prob[i], 1 - prob[i])
+}
+#p
+actual.label = valid.norm$Florence
+plot.lift(p, actual.label)
+resp = mean(train$Florence)
+for(i in 1:4){
+  for(j in 1:3){
+    for(k in 1:5){
+      tem = subset(train, (Rcode == i) & (Fcode == j) & (Mcode == k))
+      R = mean(tem$Florence)
+      if(nrow(tem)!=0 & R >= resp){
+        cat("Rcode=",
+            i,
+            "Fcode=",
+            j,
+            "Mcode=",
+            k, R,"\n")
+        
+        valid  = subset(valid, (Rcode == i) & (Fcode == j) & (Mcode == k))
+      }
+      
+      
+    }
+  }
+}
+
+```
+
+
+
+- Part 6: Use the training set data of 1800 records to construct three logistic regression
+models with Florence as the outcome variable and each of the following sets of
+predictors:
+- The full set of 15 predictors in the dataset.
+
+
+```{r}
+model1 = glm(Florence ~ ., data = train.norm, family = "binomial")
+
+predicted.prob1 = predict(model1, newdata = valid.norm, type = "response")
+
+predicted.label1 = ifelse(predicted.prob1 > 0.5, 1, 0)
+  
+observed.label1 = valid.norm$Florence
+
+M.valid1 = caret::confusionMatrix(factor(predicted.label1, levels=c(1, 0)), factor(observed.label1, levels=c(1,0)), positive = "1")
+M.valid1
+
+
+plot.lift(predicted.prob1,observed.label1)
+
+```
+
+-  FirstPurch,Related.Purchase , Mcode , Rcode ,and Fcode, Model.
+```{r}
+model2 = glm(Florence ~ FirstPurch + Related.Purchase + Mcode + Rcode + Fcode, data = train.norm, family = "binomial")
+
+predicted.prob2 = predict(model2, newdata = valid.norm, type = "response")
+
+predicted.label2 = ifelse(predicted.prob2 > 0.5, 1, 0)
+  
+observed.label2 = valid.norm$Florence
+
+M.valid2 = caret::confusionMatrix(factor(predicted.label2, levels=c(1, 0)), factor(observed.label2, levels=c(1,0)), positive = "1")
+M.valid2
+
+
+plot.lift(predicted.prob2,observed.label2)
+```
+
+- Mcode , Rcode ,and Fcode, Model.
+
+```{r}
+model3 = glm(Florence ~  Mcode + Rcode + Fcode, data = train.norm, family = "binomial")
+
+predicted.prob3 = predict(model3, newdata = valid.norm, type = "response")
+
+predicted.label3 = ifelse(predicted.prob3 > 0.5, 1, 0)
+  
+observed.label3 = valid.norm$Florence
+
+M.valid3 = caret::confusionMatrix(factor(predicted.label3, levels=c(1, 0)), factor(observed.label3, levels=c(1,0)), positive = "1")
+M.valid3
+
+
+plot.lift(predicted.prob3,observed.label3)
+```
+
+- predicting num of buyers1:
+
+```{r}
+
+predicted.prob1 = predict(model1, newdata = valid.norm, type = "response")
+predicted.label1 = ifelse(predicted.prob1 > 0.3, 1, 0)
+number.of.buyers1 = sum(predicted.label1)
+number.of.buyers1
+
+```
+
+- predicting num of buyers2:
+
+```{r}
+
+predicted.prob2 = predict(model2, newdata = valid.norm, type = "response")
+predicted.label2 = ifelse(predicted.prob2 > 0.3, 1, 0)
+number.of.buyers2 = sum(predicted.label2)
+number.of.buyers2
+
+```
+
+- predicting num of buyers3:
+
+```{r}
+
+predicted.prob3 = predict(model3, newdata = valid.norm, type = "response")
+predicted.label3 = ifelse(predicted.prob3 > 0.3, 1, 0)
+number.of.buyers3 = sum(predicted.label3)
+number.of.buyers3
+
+```
+
+
+
+
+
